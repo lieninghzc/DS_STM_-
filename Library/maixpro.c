@@ -150,6 +150,10 @@ normal_ctrl:
           + MAIXPRO_CTRL_KI * err_integral
           + MAIXPRO_CTRL_K4 * (theta_est - balance_theta);
 
+    if (fabsf(e) > MAIXPRO_DEAD_ZONE)
+        omega += (e > 0) ? MAIXPRO_CTRL_FRIC_COMP
+                         : -MAIXPRO_CTRL_FRIC_COMP;
+
     if (omega >  MAIXPRO_MAX_SPEED_HZ) omega =  MAIXPRO_MAX_SPEED_HZ;
     if (omega < -MAIXPRO_MAX_SPEED_HZ) omega = -MAIXPRO_MAX_SPEED_HZ;
 

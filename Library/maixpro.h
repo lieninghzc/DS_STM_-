@@ -11,14 +11,14 @@ typedef void (*MaixPro_Callback)(const Ball_Position* pos);
 #define MAIXPRO_DEAD_ZONE     10
 #define MAIXPRO_PX_PER_CM     10
 
-/* 进死区那版: K1=2, K2=2.5, K3=-6, K4=-12, KI=1.5, 不加摩擦 */
+/* 进死区版 + 摩擦↑ + KI↑: 20px稳态被破 */
 #define MAIXPRO_CTRL_K1           2.0f
-#define MAIXPRO_CTRL_K2           2.5f
+#define MAIXPRO_CTRL_K2           5.0f    /* ↑ 强力阻尼防过冲 */
 #define MAIXPRO_CTRL_K3          -6.0f
-#define MAIXPRO_CTRL_KI           1.5f
-#define MAIXPRO_CTRL_KI_LIM       80.0f
+#define MAIXPRO_CTRL_KI           8.0f    /* KI↑↑: 个位数px秒级推入死区 */
+#define MAIXPRO_CTRL_KI_LIM       120.0f
 #define MAIXPRO_CTRL_K4          -12.0f
-#define MAIXPRO_CTRL_FRIC_COMP    0.0f
+#define MAIXPRO_CTRL_FRIC_COMP    35.0f   /* ↑ 直接跳过摩擦死区 */
 #define MAIXPRO_ACCEL_PER_STEP    42.0f
 #define MAIXPRO_CTRL_THETA_MAX    267
 #define MAIXPRO_CTRL_VEL_ALPHA    0.5f
