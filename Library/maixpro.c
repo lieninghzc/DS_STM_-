@@ -32,9 +32,9 @@ static float      seek_hist[5];
 static uint8_t    seek_hist_idx  = 0;
 static uint16_t   prev_dist      = 0;
 static float      vel_est        = 0;
-static float      vel_prev       = 0;    /* 上一帧速度 (算加速度) */
-static float      accel_est      = 0;    /* 球加速度估计 (px/s²) */
-static float      err_integral   = 0;    /* 位置误差积分 (消假平衡) */
+static float      vel_prev       = 0;
+static float      accel_est      = 0;
+static float      err_integral   = 0;
 static float      last_err       = 0;
 static uint32_t   last_data_tick = 0;
 static uint32_t   last_ctrl_tick = 0;
@@ -133,7 +133,6 @@ normal_ctrl:
         if (dt_f > 0.001f) {
             float v_raw = (e - last_err) / dt_f;
             vel_est += MAIXPRO_CTRL_VEL_ALPHA * (v_raw - vel_est);
-            /* 加速度: a = dv/dt, 再用一次低通去噪 */
             accel_est += MAIXPRO_CTRL_VEL_ALPHA
                        * ((vel_est - vel_prev) / dt_f - accel_est);
         }
@@ -141,13 +140,10 @@ normal_ctrl:
     }
     last_err = e; last_frame_tick = now;
 
-    /* 位置积分: e≠0 时持续累积, 打破 K4 造成的假平衡 */
     err_integral += e * dt_ctrl;
     if (err_integral >  MAIXPRO_CTRL_KI_LIM) err_integral =  MAIXPRO_CTRL_KI_LIM;
     if (err_integral < -MAIXPRO_CTRL_KI_LIM) err_integral = -MAIXPRO_CTRL_KI_LIM;
 
-    /* 四变量反推 + 积分: e 项驱回中, K4 只做动态阻尼,
-       积分保证只要 e≠0 电机就一直转 */
     omega = MAIXPRO_CTRL_K1 * e
           + MAIXPRO_CTRL_K2 * vel_est
           + MAIXPRO_CTRL_K3 * (accel_est / MAIXPRO_ACCEL_PER_STEP)
