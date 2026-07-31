@@ -13,9 +13,9 @@ typedef void (*MaixPro_Callback)(const Ball_Position* pos);
 
 /* 进死区版 + 摩擦↑ + KI↑: 20px稳态被破 */
 #define MAIXPRO_CTRL_K1           2.0f
-#define MAIXPRO_CTRL_K2           5.0f    /* ↑ 强力阻尼防过冲 */
+#define MAIXPRO_CTRL_K2           5.0f
 #define MAIXPRO_CTRL_K3          -6.0f
-#define MAIXPRO_CTRL_KI           8.0f    /* KI↑↑: 个位数px秒级推入死区 */
+#define MAIXPRO_CTRL_KI           8.0f
 #define MAIXPRO_CTRL_KI_LIM       120.0f
 #define MAIXPRO_CTRL_K4          -12.0f
 #define MAIXPRO_CTRL_FRIC_COMP    35.0f   /* ↑ 直接跳过摩擦死区 */

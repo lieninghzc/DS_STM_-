@@ -150,9 +150,13 @@ normal_ctrl:
           + MAIXPRO_CTRL_KI * err_integral
           + MAIXPRO_CTRL_K4 * (theta_est - balance_theta);
 
-    if (fabsf(e) > MAIXPRO_DEAD_ZONE)
-        omega += (e > 0) ? MAIXPRO_CTRL_FRIC_COMP
-                         : -MAIXPRO_CTRL_FRIC_COMP;
+    /* 摩擦补偿: 近死区 (<20px) 加推力快速推入 */
+    {
+        float fric = MAIXPRO_CTRL_FRIC_COMP;
+        if (fabsf(e) < 20.0f) fric *= 2.0f;  /* 近死区K1弱, 摩擦补加倍 */
+        if (fabsf(e) > MAIXPRO_DEAD_ZONE)
+            omega += (e > 0) ? fric : -fric;
+    }
 
     if (omega >  MAIXPRO_MAX_SPEED_HZ) omega =  MAIXPRO_MAX_SPEED_HZ;
     if (omega < -MAIXPRO_MAX_SPEED_HZ) omega = -MAIXPRO_MAX_SPEED_HZ;
