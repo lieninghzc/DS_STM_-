@@ -43,6 +43,7 @@ static uint32_t   last_frame_tick = 0;
 static volatile uint8_t capture_origin_pending = 0;
 static uint8_t          origin_hold_active  = 0;
 static int16_t          origin_pos_signed   = 0;
+static int16_t          target_offset       = 0;  /* 目标偏移 */
 
 static void   MaixPro_ParseLine(const char *line);
 static void   MaixPro_StartRx(void);
@@ -119,7 +120,7 @@ void MaixPro_Process(void)
     }
 
     /* ---- 死区: 停住了就锁死, 不动平台 ---- */
-    if (pos.dist <= MAIXPRO_DEAD_ZONE && fabsf(vel_est) < 4.0f) {
+    if (fabsf(e) <= MAIXPRO_DEAD_ZONE && fabsf(vel_est) < 4.0f) {
         Motor_SetMode(MOTOR_MODE_BRAKE); last_speed_hz = 0;
         err_integral = 0; last_frame_tick = 0; return;
     }
@@ -172,6 +173,48 @@ uint8_t MaixPro_GetPosition(Ball_Position *pos)
 { if (pos) { *pos = current_pos; return 1; } return 0; }
 
 void MaixPro_RequestOriginCapture(void) { capture_origin_pending = 1; }
+void MaixPro_SetTarget(int16_t px)      { target_offset = px; }
+
+/**
+ * @brief  快速摆动控制 (任务2专用)
+ * @param  target_px: 目标带符号位置
+ * @param  current_e: 当前带符号误差 e
+ */
+void MaixPro_SwingTo(float target_px, float current_e)
+{
+    static float swing_last_e = 0;
+    static uint32_t swing_last_tick = 0;
+    float swing_v = 0;
+    uint32_t now = HAL_GetTick();
+    float err = current_e - target_px;
+
+    /* 更新摆动专用速度估计 */
+    if (swing_last_tick != 0) {
+        float dt = (float)(now - swing_last_tick) / 1000.0f;
+        if (dt > 0.001f) swing_v = (current_e - swing_last_e) / dt;
+    }
+    swing_last_e = current_e;
+    swing_last_tick = now;
+
+    if (fabsf(err) <= MAIXPRO_DEAD_ZONE) {
+        Motor_SetMode(MOTOR_MODE_BRAKE);
+        return;
+    }
+
+    float omega = MAIXPRO_SWING_KP * err
+                + MAIXPRO_SWING_KD * swing_v;   /* 加阻尼防过冲 */
+
+    if (omega >  MAIXPRO_SWING_MAX_HZ) omega =  MAIXPRO_SWING_MAX_HZ;
+    if (omega < -MAIXPRO_SWING_MAX_HZ) omega = -MAIXPRO_SWING_MAX_HZ;
+
+    if (omega > (int32_t)MOTOR_MIN_FREQ_HZ) {
+        Motor_SetSpeedHz((uint16_t)omega); Motor_SetMode(MOTOR_MODE_FORWARD);
+    } else if (omega < -(int32_t)MOTOR_MIN_FREQ_HZ) {
+        Motor_SetSpeedHz((uint16_t)(-omega)); Motor_SetMode(MOTOR_MODE_REVERSE);
+    } else {
+        Motor_SetMode(MOTOR_MODE_BRAKE);
+    }
+}
 
 static float MaixPro_CalcError(const Ball_Position *pos)
 {
@@ -180,8 +223,10 @@ static float MaixPro_CalcError(const Ball_Position *pos)
         origin_pos_signed = (int16_t)p; capture_origin_pending = 0;
         origin_hold_active = 1; return 0.0f;
     }
-    if (origin_hold_active) return p - (float)origin_pos_signed;
-    return p;
+    if (origin_hold_active) return p
+                              - (float)origin_pos_signed
+                              - (float)target_offset;
+    return p - (float)target_offset;
 }
 
 static void MaixPro_ParseLine(const char *line)

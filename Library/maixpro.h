@@ -33,5 +33,12 @@ void MaixPro_RegisterCallback(MaixPro_Callback callback);
 void MaixPro_Process(void);
 uint8_t MaixPro_GetPosition(Ball_Position* pos);
 void MaixPro_RequestOriginCapture(void);
+void MaixPro_SetTarget(int16_t px);   /* 设定目标偏移 (px) */
+
+/* 快速摆动 PID (任务2专用, 5s 内完成 -50↔+50) */
+#define MAIXPRO_SWING_KP      8.0f     /* 高增益 P */
+#define MAIXPRO_SWING_KD      4.0f     /* 阻尼 */
+#define MAIXPRO_SWING_MAX_HZ  120.0f
+void MaixPro_SwingTo(float target_px, float current_e);
 
 #endif

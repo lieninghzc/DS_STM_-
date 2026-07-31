@@ -27,6 +27,7 @@
 #include "motor.h"
 #include "maixpro.h"
 #include "MSPM0.h"
+#include "task_ctrl.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -96,6 +97,8 @@ int main (void)
     /* USER CODE BEGIN 2 */
     Motor_Init();
     MaixPro_Init();
+    Mspm0_Init();
+    TaskCtrl_Init();
     /* USER CODE END 2 */
 
     /* Infinite loop */
@@ -110,7 +113,7 @@ int main (void)
             uint32_t now = HAL_GetTick();
             if ((int32_t)(now - next_tick) >= 0) {
                 next_tick = now + 10;  /* 10ms 间隔 */
-                MaixPro_Process();     /* 级联控制: 角度环 + 位置环 */
+                TaskCtrl_Process();
             }
         }
     }

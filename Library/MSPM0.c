@@ -46,7 +46,7 @@ void Mspm0_RxByte(uint8_t byte)
         rx_cmd   = (Mspm0_Cmd)byte;   /* 直接映射, 不要减 '0' */
         data_rdy = 1;
         if (callback) callback(rx_cmd);
-        Mspm0_HandleCmd(rx_cmd);      /* 执行命令逻辑 */
+        /* 命令由 TaskCtrl_Process 在主循环统一处理 */
     }
     Mspm0_StartRx();  /* 重新启动 USART2 中断接收 */
 }

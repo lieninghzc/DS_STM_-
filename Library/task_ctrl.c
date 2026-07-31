@@ -1,13 +1,13 @@
 /**
  ******************************************************************************
  * @file    task_ctrl.c
- * @brief   业务逻辑状态机: MSPM0 命令 → 电机任务
+ * @brief   MSPM0 任务状态机
  *
- *  上电 → 推球到死区并稳定 → 锁死 → 等 MSPM0 指令
- *  CMD 0: 回主菜单, 锁平衡角
- *  CMD 1: 电机锁死
- *  CMD 2: 设原点 → 经 -50px → 停 +50px
- *  CMD 3/4: 设原点 → 保持小球在原点
+ *   S_INIT:     上电 PD 入死区 → 锁死
+ *   S_LOCKED:   等 MSPM0. CMD2→S_HOLD_N50, CMD3/4→S_HOLD
+ *   S_HOLD_N50: 稳定在 -50, 到位后稳定1s → 切 +50
+ *   S_HOLD_P50: 稳定在 +50, 持续保持
+ *   S_HOLD:     CMD3/4, 保持原点
  ******************************************************************************
  */
 
@@ -16,168 +16,67 @@
 #include "maixpro.h"
 #include <math.h>
 
-static TaskState  state = TASK_INIT_PUSH;
-static uint32_t   state_tick = 0;
+typedef enum { S_INIT, S_LOCKED, S_HOLD_N50, S_HOLD_P50, S_HOLD } State;
+static State    st = S_INIT;
+static uint32_t stable_ms = 0;
 
-static Mspm0_Cmd  pending_cmd = MSPM0_CMD_NONE;
-
-/* 前向声明 */
-static void ResetAndLock(void);
-
-void TaskCtrl_Init(void)
-{
-    state = TASK_INIT_PUSH;
-    state_tick = HAL_GetTick();
-    pending_cmd = MSPM0_CMD_NONE;
-}
+void TaskCtrl_Init(void) { st = S_INIT; stable_ms = 0; }
 
 void TaskCtrl_Process(void)
 {
     Ball_Position pos;
-    Mspm0_Cmd cmd;
-    uint32_t now = HAL_GetTick();
+    Mspm0_Cmd    cmd = MSPM0_CMD_NONE;
+    uint32_t     now = HAL_GetTick();
+    float e;
 
-    /* ---- 读 MSPM0 命令(非阻塞) ---- */
-    if (Mspm0_DataReady()) {
-        pending_cmd = Mspm0_GetCmd();
-        Mspm0_ClearCmd();
-    }
+    if (Mspm0_DataReady()) { cmd = Mspm0_GetCmd(); Mspm0_ClearCmd(); }
+    if (!MaixPro_GetPosition(&pos)) return;
+    e = (pos.lr == 0) ? (float)pos.dist : -(float)pos.dist;
 
-    /* ---- 各状态 ---- */
-    switch (state) {
+    switch (st) {
 
-    /* ================================================================
-     * 上电推送: 用 MaixPro PD 把球推到死区, 稳定后锁死在平衡角
-     * ================================================================ */
-    case TASK_INIT_PUSH:
-        MaixPro_Process();  /* 跑 PD  + 刹车 + 停球推 */
-        /* 检测稳定: 球在死区内且速度 < 4px/s 持续 1s */
-        if (MaixPro_GetPosition(&pos)) {
-            if (pos.dist <= MAIXPRO_DEAD_ZONE) {
-                if ((now - state_tick) > 1000) {
-                    ResetAndLock();
-                    state = TASK_WAIT_CMD;
-                }
-            } else {
-                state_tick = now;
-            }
-        }
-        break;
-
-    /* ================================================================
-     * 等指令
-     * ================================================================ */
-    case TASK_WAIT_CMD:
-        if (pending_cmd == MSPM0_CMD_NONE) break;
-        cmd = pending_cmd;
-        pending_cmd = MSPM0_CMD_NONE;
-
-        switch (cmd) {
-        case MSPM0_CMD_0:
-            state = TASK_MENU;
-            ResetAndLock();
-            break;
-        case MSPM0_CMD_1:
-            state = TASK_LOCK;
-            Motor_SetMode(MOTOR_MODE_BRAKE);
-            break;
-        case MSPM0_CMD_2:
-            MaixPro_RequestOriginCapture();
-            state = TASK_SWING;
-            state_tick = now;
-            break;
-        case MSPM0_CMD_3:
-        case MSPM0_CMD_4:
-            MaixPro_RequestOriginCapture();
-            state = TASK_HOLD;
-            break;
-        default:
-            break;
-        }
-        break;
-
-    /* ================================================================
-     * CMD 1: 锁死
-     * ================================================================ */
-    case TASK_LOCK:
-        if (pending_cmd != MSPM0_CMD_NONE) {
-            cmd = pending_cmd;
-            pending_cmd = MSPM0_CMD_NONE;
-            if (cmd == MSPM0_CMD_0) {
-                state = TASK_MENU;
-                ResetAndLock();
-            } else if (cmd == MSPM0_CMD_2) {
-                MaixPro_RequestOriginCapture();
-                state = TASK_SWING;
-                state_tick = now;
-            } else if (cmd == MSPM0_CMD_3 || cmd == MSPM0_CMD_4) {
-                MaixPro_RequestOriginCapture();
-                state = TASK_HOLD;
-            }
-        }
-        break;
-
-    /* ================================================================
-     * CMD 2: 设原点 → 经 -50px → 停 +50px
-     * ================================================================ */
-    case TASK_SWING:
-        MaixPro_Process();  /* PD 正常控制 */
-        /* 检测稳定: 球在 +50 附近且速度 < 4px/s */
-        if (MaixPro_GetPosition(&pos)) {
-            float e = (pos.lr == 0) ? (float)pos.dist : -(float)pos.dist;
-            if (fabsf(e - 50.0f) <= MAIXPRO_DEAD_ZONE) {
-                if ((now - state_tick) > 1000) {
-                    ResetAndLock();
-                    state = TASK_WAIT_CMD;
-                }
-            } else {
-                state_tick = now;
-            }
-        }
-        if (pending_cmd == MSPM0_CMD_0) {
-            pending_cmd = MSPM0_CMD_NONE;
-            state = TASK_MENU;
-            ResetAndLock();
-        }
-        break;
-
-    /* ================================================================
-     * CMD 3/4: 设原点 → 保持原点
-     * ================================================================ */
-    case TASK_HOLD:
+    case S_INIT:
         MaixPro_Process();
-        if (pending_cmd == MSPM0_CMD_0) {
-            pending_cmd = MSPM0_CMD_NONE;
-            state = TASK_MENU;
-            ResetAndLock();
+        if (pos.dist <= MAIXPRO_DEAD_ZONE) {
+            if ((now - stable_ms) > 1000)
+            { Motor_SetMode(MOTOR_MODE_BRAKE); st = S_LOCKED; }
+        } else stable_ms = now;
+        break;
+
+    case S_LOCKED:
+        if (cmd == MSPM0_CMD_2) {
+            MaixPro_RequestOriginCapture();
+            MaixPro_SetTarget(-50);
+            stable_ms = 0;
+            st = S_HOLD_N50;
+        } else if (cmd == MSPM0_CMD_3 || cmd == MSPM0_CMD_4) {
+            MaixPro_RequestOriginCapture();
+            st = S_HOLD;
         }
         break;
 
-    /* ================================================================
-     * CMD 0: 回主菜单, 锁平衡角, 等新指令
-     * ================================================================ */
-    case TASK_MENU:
-        if (pending_cmd != MSPM0_CMD_NONE) {
-            cmd = pending_cmd;
-            pending_cmd = MSPM0_CMD_NONE;
-            if (cmd == MSPM0_CMD_1) {
-                state = TASK_LOCK;
-                Motor_SetMode(MOTOR_MODE_BRAKE);
-            } else if (cmd == MSPM0_CMD_2) {
-                MaixPro_RequestOriginCapture();
-                state = TASK_SWING;
-                state_tick = now;
-            } else if (cmd == MSPM0_CMD_3 || cmd == MSPM0_CMD_4) {
-                MaixPro_RequestOriginCapture();
-                state = TASK_HOLD;
+    case S_HOLD_N50:
+        MaixPro_SwingTo(-50.0f, e);   /* 快速推到 -50 */
+        /* 球到 -40~-60 范围稳定 300ms 切 +50 */
+        if (e <= -40.0f && e >= -60.0f) {
+            if ((now - stable_ms) > 300) {
+                MaixPro_SetTarget(50); stable_ms = 0; st = S_HOLD_P50;
             }
-        }
+        } else stable_ms = now;
+        if (cmd == MSPM0_CMD_0)
+        { Motor_SetMode(MOTOR_MODE_BRAKE); st = S_LOCKED; }
+        break;
+
+    case S_HOLD_P50:
+        MaixPro_SwingTo(50.0f, e);    /* 快速推到 +50 并保持 */
+        if (cmd == MSPM0_CMD_0)
+        { Motor_SetMode(MOTOR_MODE_BRAKE); st = S_LOCKED; }
+        break;
+
+    case S_HOLD:
+        if (cmd == MSPM0_CMD_0)
+        { Motor_SetMode(MOTOR_MODE_BRAKE); st = S_LOCKED; }
+        else MaixPro_Process();
         break;
     }
-}
-
-/* 电机锁死在当前角度(刹车) */
-static void ResetAndLock(void)
-{
-    Motor_SetMode(MOTOR_MODE_BRAKE);
 }
