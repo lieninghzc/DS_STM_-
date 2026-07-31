@@ -118,12 +118,10 @@ void MaixPro_Process(void)
         return;
     }
 
-    /* ---- 死区 ---- */
+    /* ---- 死区: 停住了就锁死, 不动平台 ---- */
     if (pos.dist <= MAIXPRO_DEAD_ZONE && fabsf(vel_est) < 4.0f) {
         Motor_SetMode(MOTOR_MODE_BRAKE); last_speed_hz = 0;
-        theta_est = balance_theta;
-        err_integral = 0;
-        last_frame_tick = 0; return;
+        err_integral = 0; last_frame_tick = 0; return;
     }
 
     /* ---- 正常控制 ---- */
@@ -150,14 +148,12 @@ normal_ctrl:
           + MAIXPRO_CTRL_KI * err_integral
           + MAIXPRO_CTRL_K4 * (theta_est - balance_theta);
 
-    /* 摩擦补偿: 近死区 (<20px) 加推力快速推入 */
     {
         float fric = MAIXPRO_CTRL_FRIC_COMP;
-        if (fabsf(e) < 20.0f) fric *= 2.0f;  /* 近死区K1弱, 摩擦补加倍 */
+        if (fabsf(e) < 20.0f) fric *= 2.0f;
         if (fabsf(e) > MAIXPRO_DEAD_ZONE)
             omega += (e > 0) ? fric : -fric;
     }
-
     if (omega >  MAIXPRO_MAX_SPEED_HZ) omega =  MAIXPRO_MAX_SPEED_HZ;
     if (omega < -MAIXPRO_MAX_SPEED_HZ) omega = -MAIXPRO_MAX_SPEED_HZ;
 
