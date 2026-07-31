@@ -1,11 +1,10 @@
 /**
  ******************************************************************************
  * @file    maixpro.c
- * @brief   MaixCAM UART + 物理推导 PD 级联控制 + 寻平衡
+ * @brief   MaixCAM UART + 状态反推控制 + 寻平衡
  *
- *   1px=1mm, 1步→42px/s², 1°→374px/s²
- *   外环: θ* = balance + Kp·e + Ki·∫e + Kd·v
- *   内环: ω = Kp_ang·(θ* − θ̂), clamp ±44Hz
+ *   ω = Kp·e + Kd·v − Ka·(θ̂−balance)
+ *   位置+速度+加速度, 直出电机速度, 不经过角度环
  ******************************************************************************
  */
 
@@ -29,11 +28,13 @@ static uint8_t    seeking        = 0;
 static float      theta_est      = 0;
 static int32_t    last_speed_hz  = 0;
 static float      balance_theta  = 0;
-static float      seek_hist[5];       /* 最近5帧角度 */
-static uint8_t    seek_hist_idx = 0;
+static float      seek_hist[5];
+static uint8_t    seek_hist_idx  = 0;
 static uint16_t   prev_dist      = 0;
-static float      err_integral   = 0;
 static float      vel_est        = 0;
+static float      vel_prev       = 0;    /* 上一帧速度 (算加速度) */
+static float      accel_est      = 0;    /* 球加速度估计 (px/s²) */
+static float      err_integral   = 0;    /* 位置误差积分 (消假平衡) */
 static float      last_err       = 0;
 static uint32_t   last_data_tick = 0;
 static uint32_t   last_ctrl_tick = 0;
@@ -54,7 +55,7 @@ void MaixPro_Init(void)
     last_frame_tick = 0; last_ctrl_tick = 0; last_data_tick = 0;
     theta_est = 0; last_speed_hz = 0; balance_theta = 0;
     memset(seek_hist, 0, sizeof(seek_hist)); seek_hist_idx = 0; prev_dist = 0;
-    err_integral = 0; vel_est = 0; last_err = 0;
+    vel_est = 0; vel_prev = 0; accel_est = 0; err_integral = 0; last_err = 0;
     need_balance = 1; seeking = 0;
     HAL_NVIC_SetPriority(USART1_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(USART1_IRQn);
@@ -67,7 +68,7 @@ void MaixPro_Process(void)
 {
     Ball_Position pos;
     uint32_t now;
-    float dt_ctrl, e, theta_star, e_theta, omega;
+    float dt_ctrl, e, omega;
 
     now = HAL_GetTick();
     dt_ctrl = (float)(now - last_ctrl_tick) / 1000.0f;
@@ -94,23 +95,19 @@ void MaixPro_Process(void)
     if (need_balance) {
         if (pos.dist <= MAIXPRO_DEAD_ZONE) {
             balance_theta = theta_est; need_balance = 0; seeking = 0;
-            err_integral = 0; vel_est = 0;
+            err_integral = 0;
             Motor_SetMode(MOTOR_MODE_BRAKE); last_speed_hz = 0;
             last_err = e; last_frame_tick = now; return;
         }
         uint8_t dir = (pos.lr == 0) ? 1 : 0;
         if (!seeking) { seeking = 1; prev_dist = pos.dist;
             memset(seek_hist, 0, sizeof(seek_hist)); seek_hist_idx = 0; }
-        /* 记录最近5帧角度 */
-        seek_hist[seek_hist_idx % 5] = theta_est;
-        seek_hist_idx++;
+        seek_hist[seek_hist_idx % 5] = theta_est; seek_hist_idx++;
         int16_t dd = (int16_t)pos.dist - (int16_t)prev_dist;
         if (dd < 0) dd = -dd;
         if (dd >= MAIXPRO_SEEK_MOVE_THRESH) {
-            /* 取5帧前的角度作为平衡角 */
             balance_theta = seek_hist[(seek_hist_idx - 5) % 5];
             need_balance = 0; seeking = 0;
-            err_integral = 0; vel_est = 0;
             theta_est = balance_theta; last_speed_hz = 0;
             last_err = e; last_frame_tick = now; goto normal_ctrl;
         }
@@ -124,62 +121,39 @@ void MaixPro_Process(void)
     /* ---- 死区 ---- */
     if (pos.dist <= MAIXPRO_DEAD_ZONE && fabsf(vel_est) < 4.0f) {
         Motor_SetMode(MOTOR_MODE_BRAKE); last_speed_hz = 0;
-        theta_est = balance_theta;  /* 回到平衡角, 消除残留加速度 */
+        theta_est = balance_theta;
+        err_integral = 0;
         last_frame_tick = 0; return;
     }
 
-    /* ---- 正常 PD ---- */
+    /* ---- 正常控制 ---- */
 normal_ctrl:
     if (last_frame_tick != 0) {
         float dt_f = (float)(now - last_frame_tick) / 1000.0f;
         if (dt_f > 0.001f) {
             float v_raw = (e - last_err) / dt_f;
             vel_est += MAIXPRO_CTRL_VEL_ALPHA * (v_raw - vel_est);
+            /* 加速度: a = dv/dt, 再用一次低通去噪 */
+            accel_est += MAIXPRO_CTRL_VEL_ALPHA
+                       * ((vel_est - vel_prev) / dt_f - accel_est);
         }
+        vel_prev = vel_est;
     }
     last_err = e; last_frame_tick = now;
 
-    /* 积分 */
+    /* 位置积分: e≠0 时持续累积, 打破 K4 造成的假平衡 */
     err_integral += e * dt_ctrl;
-    if (err_integral >  MAIXPRO_CTRL_INTEGRAL_LIM) err_integral =  MAIXPRO_CTRL_INTEGRAL_LIM;
-    if (err_integral < -MAIXPRO_CTRL_INTEGRAL_LIM) err_integral = -MAIXPRO_CTRL_INTEGRAL_LIM;
+    if (err_integral >  MAIXPRO_CTRL_KI_LIM) err_integral =  MAIXPRO_CTRL_KI_LIM;
+    if (err_integral < -MAIXPRO_CTRL_KI_LIM) err_integral = -MAIXPRO_CTRL_KI_LIM;
 
-    /* θ* = balance + Kp·e + Ki·∫e + Kd·v + 刹车 */
-    theta_star = balance_theta
-               + MAIXPRO_CTRL_KP_BALL * e
-               + MAIXPRO_CTRL_KI_BALL * err_integral
-               + MAIXPRO_CTRL_KD_BALL * vel_est;
+    /* 四变量反推 + 积分: e 项驱回中, K4 只做动态阻尼,
+       积分保证只要 e≠0 电机就一直转 */
+    omega = MAIXPRO_CTRL_K1 * e
+          + MAIXPRO_CTRL_K2 * vel_est
+          + MAIXPRO_CTRL_K3 * (accel_est / MAIXPRO_ACCEL_PER_STEP)
+          + MAIXPRO_CTRL_KI * err_integral
+          + MAIXPRO_CTRL_K4 * (theta_est - balance_theta);
 
-    /* 刹车含电机响应时间补偿 */
-    if (e * vel_est < 0.0f) {
-        float abs_v = fabsf(vel_est);
-        float abs_e = fabsf(e);
-        float sign = (vel_est > 0) ? 1.0f : -1.0f;
-        float th_brake = (abs_v * abs_v) / (MAIXPRO_CTRL_BRAKE_GAIN * (abs_e + 1.0f));
-        float dth = fabsf(th_brake * sign - theta_est);
-        float t_motor = dth / (float)MAIXPRO_MAX_SPEED_HZ;
-        float a_curr = (theta_est - balance_theta) * 42.0f;
-        float e_lost = abs_v * t_motor + 0.5f * fabsf(a_curr) * t_motor * t_motor;
-        float e_rem = abs_e - e_lost;
-        if (e_rem < 2.0f) e_rem = 2.0f;
-        th_brake = (abs_v * abs_v) / (MAIXPRO_CTRL_BRAKE_GAIN * e_rem);
-        theta_star += th_brake * sign;
-    }
-
-    /* 停球慢推: v≈0→22Hz缓慢倾斜, 球动切回PD */
-    if (fabsf(vel_est) < 4.0f) {
-        Motor_SetSpeedHz(22);
-        Motor_SetMode((e > 0) ? MOTOR_MODE_FORWARD : MOTOR_MODE_REVERSE);
-        last_speed_hz = (e > 0) ? 22 : -22;
-        theta_est += (float)last_speed_hz * dt_ctrl;
-        return;  /* 跳过内环, 直接控制 */
-    }
-    if (theta_star >  MAIXPRO_CTRL_THETA_MAX) theta_star =  MAIXPRO_CTRL_THETA_MAX;
-    if (theta_star < -MAIXPRO_CTRL_THETA_MAX) theta_star = -MAIXPRO_CTRL_THETA_MAX;
-
-    /* 内环: ω = Kp_ang·(θ* − θ̂) */
-    e_theta = theta_star - theta_est;
-    omega = MAIXPRO_CTRL_KP_ANG * e_theta;
     if (omega >  MAIXPRO_MAX_SPEED_HZ) omega =  MAIXPRO_MAX_SPEED_HZ;
     if (omega < -MAIXPRO_MAX_SPEED_HZ) omega = -MAIXPRO_MAX_SPEED_HZ;
 

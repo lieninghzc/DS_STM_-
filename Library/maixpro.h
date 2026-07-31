@@ -3,39 +3,34 @@
 
 #include "main.h"
 
-typedef struct
-{
-        uint8_t lr;
-        uint16_t dist;
-} Ball_Position;
-
+typedef struct { uint8_t lr; uint16_t dist; } Ball_Position;
 typedef void (*MaixPro_Callback)(const Ball_Position* pos);
 
-#define MAIXPRO_UART huart1
+#define MAIXPRO_UART          huart1
 #define MAIXPRO_LINE_BUF_SIZE 32
-#define MAIXPRO_DEAD_ZONE 10
-#define MAIXPRO_PX_PER_CM 10
+#define MAIXPRO_DEAD_ZONE     10
+#define MAIXPRO_PX_PER_CM     10
 
-/* 物理: 1步→42px/s², 刹车含电机响应时间补偿 */
-#define MAIXPRO_CTRL_KP_BALL 0.03f
-#define MAIXPRO_CTRL_KI_BALL 0.02f
-#define MAIXPRO_CTRL_KD_BALL 0.05f
-#define MAIXPRO_CTRL_INTEGRAL_LIM 30
-#define MAIXPRO_CTRL_KP_ANG 44.0f
-#define MAIXPRO_CTRL_THETA_MAX 267
-#define MAIXPRO_CTRL_VEL_ALPHA 0.5f
-#define MAIXPRO_CTRL_VEL_LIM 200.0f
-#define MAIXPRO_CTRL_THETA_SLEW 267
-#define MAIXPRO_CTRL_BRAKE_GAIN 60.0f /* 刹车增益, 越小越猛 */
+/* 四变量全状态反推 + 积分 (放大增益, 快收敛 + 消假平衡) */
+#define MAIXPRO_CTRL_K1           2.0f    /* 位置项: 30px→60Hz, 超死区 */
+#define MAIXPRO_CTRL_K2           2.5f    /* 速度项: 阻尼 */
+#define MAIXPRO_CTRL_K3          -6.0f    /* 加速度项 */
+#define MAIXPRO_CTRL_KI           1.5f    /* 积分项: 30px→45Hz/s, 强力推 */
+#define MAIXPRO_CTRL_KI_LIM       80.0f   /* 积分限幅 */
+#define MAIXPRO_CTRL_K4          -12.0f   /* 角度项 */
+#define MAIXPRO_ACCEL_PER_STEP    42.0f
+#define MAIXPRO_CTRL_THETA_MAX    267
+#define MAIXPRO_CTRL_VEL_ALPHA    0.5f
+#define MAIXPRO_CTRL_VEL_LIM      200.0f
 
-#define MAIXPRO_SEEK_SPEED_HZ 44
-#define MAIXPRO_SEEK_MOVE_THRESH 5
-#define MAIXPRO_MAX_SPEED_HZ 120 /* 10°/s, 不抖 */
+#define MAIXPRO_SEEK_SPEED_HZ     44
+#define MAIXPRO_SEEK_MOVE_THRESH  5
+#define MAIXPRO_MAX_SPEED_HZ      120
 
-void MaixPro_Init (void);
-void MaixPro_RegisterCallback (MaixPro_Callback callback);
-void MaixPro_Process (void);
-uint8_t MaixPro_GetPosition (Ball_Position* pos);
-void MaixPro_RequestOriginCapture (void);
+void MaixPro_Init(void);
+void MaixPro_RegisterCallback(MaixPro_Callback callback);
+void MaixPro_Process(void);
+uint8_t MaixPro_GetPosition(Ball_Position* pos);
+void MaixPro_RequestOriginCapture(void);
 
 #endif

@@ -14,6 +14,7 @@
 #include "task_ctrl.h"
 #include "motor.h"
 #include "maixpro.h"
+#include <math.h>
 
 static TaskState  state = TASK_INIT_PUSH;
 static uint32_t   state_tick = 0;
