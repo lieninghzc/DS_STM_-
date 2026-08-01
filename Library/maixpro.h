@@ -3,42 +3,41 @@
 
 #include "main.h"
 
-typedef struct { uint8_t lr; uint16_t dist; } Ball_Position;
+typedef struct
+{
+        uint8_t lr;
+        uint16_t dist;
+} Ball_Position;
+
 typedef void (*MaixPro_Callback)(const Ball_Position* pos);
 
-#define MAIXPRO_UART          huart1
+#define MAIXPRO_UART huart1
 #define MAIXPRO_LINE_BUF_SIZE 32
-#define MAIXPRO_DEAD_ZONE     10
-#define MAIXPRO_PX_PER_CM     10
+#define MAIXPRO_DEAD_ZONE 10
+#define MAIXPRO_PX_PER_CM 10
 
 /* 进死区版 + 摩擦↑ + KI↑: 20px稳态被破 */
-#define MAIXPRO_CTRL_K1           2.0f
-#define MAIXPRO_CTRL_K2           5.0f
-#define MAIXPRO_CTRL_K3          -6.0f
-#define MAIXPRO_CTRL_KI           8.0f
-#define MAIXPRO_CTRL_KI_LIM       120.0f
-#define MAIXPRO_CTRL_K4          -12.0f
-#define MAIXPRO_CTRL_FRIC_COMP    35.0f   /* ↑ 直接跳过摩擦死区 */
-#define MAIXPRO_ACCEL_PER_STEP    42.0f
-#define MAIXPRO_CTRL_THETA_MAX    267
-#define MAIXPRO_CTRL_VEL_ALPHA    0.5f
-#define MAIXPRO_CTRL_VEL_LIM      200.0f
+#define MAIXPRO_CTRL_K1 2.0f
+#define MAIXPRO_CTRL_K2 5.0f
+#define MAIXPRO_CTRL_K3 -6.0f
+#define MAIXPRO_CTRL_KI 8.0f
+#define MAIXPRO_CTRL_KI_LIM 120.0f
+#define MAIXPRO_CTRL_K4 -12.0f
+#define MAIXPRO_CTRL_FRIC_COMP 35.0f /* ↑ 直接跳过摩擦死区 */
+#define MAIXPRO_ACCEL_PER_STEP 42.0f
+#define MAIXPRO_CTRL_THETA_MAX 267
+#define MAIXPRO_CTRL_VEL_ALPHA 0.5f
+#define MAIXPRO_CTRL_VEL_LIM 200.0f
 
-#define MAIXPRO_SEEK_SPEED_HZ     44
-#define MAIXPRO_SEEK_MOVE_THRESH  5
-#define MAIXPRO_MAX_SPEED_HZ      120
+#define MAIXPRO_SEEK_SPEED_HZ 44
+#define MAIXPRO_SEEK_MOVE_THRESH 5
+#define MAIXPRO_MAX_SPEED_HZ 120
 
-void MaixPro_Init(void);
-void MaixPro_RegisterCallback(MaixPro_Callback callback);
-void MaixPro_Process(void);
-uint8_t MaixPro_GetPosition(Ball_Position* pos);
-void MaixPro_RequestOriginCapture(void);
-void MaixPro_SetTarget(int16_t px);   /* 设定目标偏移 (px) */
-
-/* 快速摆动 PID (任务2专用, 5s 内完成 -50↔+50) */
-#define MAIXPRO_SWING_KP      8.0f     /* 高增益 P */
-#define MAIXPRO_SWING_KD      4.0f     /* 阻尼 */
-#define MAIXPRO_SWING_MAX_HZ  120.0f
-void MaixPro_SwingTo(float target_px, float current_e);
+void MaixPro_Init (void);
+void MaixPro_RegisterCallback (MaixPro_Callback callback);
+void MaixPro_Process (void);
+uint8_t MaixPro_GetPosition (Ball_Position* pos);
+void MaixPro_RequestOriginCapture (void);
+void MaixPro_SetTarget (int16_t px); /* 设定目标偏移 (px) */
 
 #endif

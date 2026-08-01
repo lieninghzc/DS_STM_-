@@ -101,23 +101,14 @@ int main (void)
     TaskCtrl_Init();
     /* USER CODE END 2 */
 
-    /* Infinite loop */
-    /* USER CODE BEGIN WHILE */
-    while (1)
-    {
-        /* USER CODE END WHILE */
-
-        /* USER CODE BEGIN 3 */
-        {
-            static uint32_t next_tick = 0;
-            uint32_t now = HAL_GetTick();
-            if ((int32_t)(now - next_tick) >= 0) {
-                next_tick = now + 10;  /* 10ms 间隔 */
-                TaskCtrl_Process();
-            }
+    while (1) {
+        static uint32_t next_tick = 0;
+        uint32_t now = HAL_GetTick();
+        if ((int32_t)(now - next_tick) >= 0) {
+            next_tick = now + 10;
+            TaskCtrl_Process();
         }
     }
-    /* USER CODE END 3 */
 }
 
 /**
